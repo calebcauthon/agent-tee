@@ -16,13 +16,13 @@ Agent Tee sits between you and your terminal:
 ### Homebrew
 
 ```bash
-brew install caleb/tap/agent-tee
+brew install calebcauthon/tap/agent-tee
 ```
 
 ### Manual
 
 ```bash
-curl -L https://github.com/caleb/agent-tee/releases/latest/download/t -o /usr/local/bin/t
+curl -L https://github.com/calebcauthon/agent-tee/releases/latest/download/t -o /usr/local/bin/t
 chmod +x /usr/local/bin/t
 ```
 

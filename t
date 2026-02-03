@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Agent Tee - Run commands while teeing stdout+stderr to per-concern log files
-# https://github.com/caleb/agent-tee
+# https://github.com/calebcauthon/agent-tee
 #
 # Usage: t <concern> <command> [args...]
 #        t latest <concern>

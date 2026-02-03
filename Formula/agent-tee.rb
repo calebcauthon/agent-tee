@@ -1,7 +1,7 @@
 class AgentTee < Formula
   desc "Run commands while teeing stdout+stderr to per-concern log files"
-  homepage "https://github.com/caleb/agent-tee"
-  url "https://github.com/caleb/agent-tee/archive/refs/tags/v0.1.0.tar.gz"
+  homepage "https://github.com/calebcauthon/agent-tee"
+  url "https://github.com/calebcauthon/agent-tee/archive/refs/tags/v0.1.0.tar.gz"
   sha256 "PLACEHOLDER"
   license "MIT"
 
