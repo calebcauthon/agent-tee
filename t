@@ -18,32 +18,36 @@ LOG_DIR="${AGENT_TEE_LOG_DIR:-$HOME/.agent-tee/logs}"
 
 usage() {
     cat << 'EOF'
-Usage: t <concern> <command> [args...]
-       t latest <concern>
-       t copy <concern>
-       t read <concern>
-       t tail <concern>
+Usage: t [@concern] <command> [args...]
+       t [@concern] latest
+       t [@concern] copy
+       t [@concern] read
+       t [@concern] tail
        t --version
        t --help
 
 Run commands while logging output to per-concern files.
+Concern is specified with @ prefix. If omitted, "default" is used.
 
 Options:
     -h, --help      Show this help message
     -v, --version   Show version information
 
 Commands:
-    <concern> <cmd>   Run command and log to ~/.agent-tee/logs/<concern>.log
-    latest <concern>  Show output from the last run
-    copy <concern>    Copy last run output to clipboard
-    read <concern>    Read entire log file
-    tail <concern>    Tail -f the log file
+    [@concern] <cmd>   Run command and log to ~/.agent-tee/logs/<concern>.log
+    [@concern] latest  Show output from the last run
+    [@concern] copy    Copy last run output to clipboard
+    [@concern] read    Read entire log file
+    [@concern] tail    Tail -f the log file
 
 Examples:
-    t build npm run build
-    t deploy ./deploy.sh production
-    t latest build
-    t copy build
+    t echo 'hello'                   # Run with default concern
+    t @build npm run build           # Run with "build" concern
+    t @deploy ./deploy.sh prod       # Run with "deploy" concern
+    t latest                         # Show latest for default concern
+    t @build latest                  # Show latest for "build" concern
+    t copy                           # Copy default concern to clipboard
+    t @deploy copy                   # Copy "deploy" concern to clipboard
 
 Environment:
     AGENT_TEE_LOG_DIR   Override default log directory
@@ -195,30 +199,56 @@ Got this output:
 main() {
     [[ $# -eq 0 ]] && { usage >&2; exit 1; }
     
+    # Handle options first
     case "$1" in
         -h|--help) usage; exit 0 ;;
         -v|--version) version; exit 0 ;;
     esac
     
+    # Parse concern (must be first if provided)
+    local concern="default"
+    if [[ "$1" == @* ]]; then
+        concern="${1#@}"  # Remove @ prefix
+        shift
+        [[ -z "$concern" ]] && { echo "Error: Empty concern after @" >&2; exit 1; }
+    fi
+    
+    # Check for double @ symbols (invalid)
+    for arg in "$@"; do
+        if [[ "$arg" == @* ]]; then
+            echo "Error: Cannot specify concern more than once (found: $arg)" >&2
+            exit 1
+        fi
+    done
+    
+    # No args after concern? Error.
+    [[ $# -eq 0 ]] && { echo "Error: No command specified" >&2; exit 1; }
+    
+    # Check if next arg is a subcommand
     case "$1" in
         latest)
-            [[ $# -ne 2 ]] && { echo "Usage: t latest <concern>" >&2; exit 1; }
-            cmd_latest "$2"
+            shift
+            [[ $# -gt 0 ]] && { echo "Error: Too many arguments after 'latest'" >&2; exit 1; }
+            cmd_latest "$concern"
             ;;
         copy)
-            [[ $# -ne 2 ]] && { echo "Usage: t copy <concern>" >&2; exit 1; }
-            cmd_copy "$2"
+            shift
+            [[ $# -gt 0 ]] && { echo "Error: Too many arguments after 'copy'" >&2; exit 1; }
+            cmd_copy "$concern"
             ;;
         read)
-            [[ $# -ne 2 ]] && { echo "Usage: t read <concern>" >&2; exit 1; }
-            cmd_read "$2"
+            shift
+            [[ $# -gt 0 ]] && { echo "Error: Too many arguments after 'read'" >&2; exit 1; }
+            cmd_read "$concern"
             ;;
         tail)
-            [[ $# -ne 2 ]] && { echo "Usage: t tail <concern>" >&2; exit 1; }
-            cmd_tail "$2"
+            shift
+            [[ $# -gt 0 ]] && { echo "Error: Too many arguments after 'tail'" >&2; exit 1; }
+            cmd_tail "$concern"
             ;;
         *)
-            cmd_run "$@"
+            # Run command with the specified concern
+            cmd_run "$concern" "$@"
             ;;
     esac
 }
