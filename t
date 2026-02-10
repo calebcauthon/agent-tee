@@ -15,6 +15,13 @@ set -euo pipefail
 
 VERSION="0.1.1"
 LOG_DIR="${AGENT_TEE_LOG_DIR:-$HOME/.agent-tee/logs}"
+CONFIG_FILE="${AGENT_TEE_CONFIG:-$HOME/.agent-tee/config}"
+DEFAULT_TEMPLATE='---
+Ran: {{command}}
+Duration: {{duration}}ms
+Output:
+{{output}}
+---'
 
 usage() {
     cat << 'EOF'
@@ -88,6 +95,62 @@ copy_to_clipboard() {
     fi
 }
 
+load_clipboard_template() {
+    if [[ -f "$CONFIG_FILE" ]]; then
+        source "$CONFIG_FILE"
+    fi
+    echo "${CLIPBOARD_TEMPLATE:-$DEFAULT_TEMPLATE}"
+}
+
+process_template() {
+    local template="$1" command="$2" output="$3" duration="$4"
+    local timestamp="$5" concern="$6" exit_code="$7"
+
+    template="${template//\{\{command\}\}/$command}"
+    template="${template//\{\{output\}\}/$output}"
+    template="${template//\{\{duration\}\}/$duration}"
+    template="${template//\{\{timestamp\}\}/$timestamp}"
+    template="${template//\{\{concern\}\}/$concern}"
+    template="${template//\{\{exit_code\}\}/$exit_code}"
+    echo "$template"
+}
+
+format_clipboard_content() {
+    local run_content="$1"
+    shift
+    local concern="$1"
+    shift
+    local extra_args="$@"
+
+    local template
+    template=$(load_clipboard_template)
+
+    local command_line
+    command_line=$(echo "$run_content" | head -1)
+    local command
+    command=$(echo "$command_line" | sed 's/.*| \(.*\) <<<.*/\1/')
+
+    local line_count
+    line_count=$(echo "$run_content" | wc -l | tr -d ' ')
+
+    local output
+    if [[ $line_count -le 150 ]]; then
+        output=$(echo "$run_content" | tail -n +2)
+    else
+        local first_10 last_100
+        first_10=$(echo "$run_content" | head -10 | tail -n +2)
+        last_100=$(echo "$run_content" | tail -100)
+        output=$(echo -e "${first_10}\n\n...\n\n${last_100}")
+    fi
+
+    local timestamp exit_code duration
+    timestamp=$(echo "$command_line" | sed 's/.*>>> AGENT_TEE_RUN_START: \(.*\) |.*/\1/')
+    exit_code="${AGENT_TEE_EXIT_CODE:-0}"
+    duration="${AGENT_TEE_DURATION:-0}"
+
+    process_template "$template" "$command" "$output" "$duration" "$timestamp" "$concern" "$exit_code"
+}
+
 cmd_latest() {
     local concern="$1"
     local log_file="${LOG_DIR}/${concern}.log"
@@ -104,14 +167,20 @@ cmd_latest() {
 cmd_copy() {
     local concern="$1"
     local log_file="${LOG_DIR}/${concern}.log"
-    
+
     [[ ! -f "$log_file" ]] && { echo "Error: No log file found for: $concern" >&2; return 1; }
-    
+
     local sep_line
     sep_line=$(get_last_separator_line "$log_file")
     [[ -z "$sep_line" ]] && { echo "Error: No runs found in log" >&2; return 1; }
-    
-    tail -n +"$sep_line" "$log_file" | copy_to_clipboard
+
+    local run_content
+    run_content=$(tail -n +"$sep_line" "$log_file")
+
+    local clipboard_content
+    clipboard_content=$(format_clipboard_content "$run_content" "$concern")
+
+    copy_to_clipboard "$clipboard_content"
     echo "Copied last run for '$concern' to clipboard"
 }
 
@@ -136,16 +205,20 @@ cmd_tail() {
 cmd_run() {
     local concern="$1"
     shift
-    
+
     [[ $# -eq 0 ]] && { echo "Error: No command specified" >&2; usage >&2; return 1; }
-    
+
     local log_file="${LOG_DIR}/${concern}.log"
-    
+    local start_time
+    start_time=$(python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null) || \
+    start_time=$(date -u +%s%3N 2>/dev/null) || \
+    start_time=$(gdate -u +%s%3N 2>/dev/null)
+
     mkdir -p "$LOG_DIR"
-    
+
     # Timestamp header
     echo -e "\n>>> AGENT_TEE_RUN_START: $(date '+%Y-%m-%d %H:%M:%S') | $* <<<" >> "$log_file"
-    
+
     # Run with proper buffering
     local exit_code=0
     if command -v unbuffer &>/dev/null; then
@@ -158,42 +231,31 @@ cmd_run() {
         script -q /dev/null "$@" 2>&1 | sed -l $'s/\\^D\x08\x08//g' | tee -a "$log_file" || true
         exit_code=${PIPESTATUS[0]:-0}
     fi
-    
-    # Auto-copy to clipboard
+
+    # Calculate duration
+    local end_time duration
+    end_time=$(python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null) || \
+    end_time=$(date -u +%s%3N 2>/dev/null) || \
+    end_time=$(gdate -u +%s%3N 2>/dev/null)
+    duration=$(( end_time - start_time ))
+
+    # Auto-copy to clipboard using template
     local sep_line
     sep_line=$(get_last_separator_line "$log_file")
     if [[ -n "$sep_line" ]]; then
         local run_content
         run_content=$(tail -n +"$sep_line" "$log_file")
-        local line_count
-        line_count=$(echo "$run_content" | wc -l | tr -d ' ')
-        
-        local command_line
-        command_line=$(echo "$run_content" | head -1)
-        local command
-        command=$(echo "$command_line" | sed 's/.*| \(.*\) <<<.*/\1/')
-        
-        local clipboard_content="---
-Ran this command: ${command}
-Got this output:
-"
-        
-        if [[ $line_count -le 150 ]]; then
-            clipboard_content+=$(echo "$run_content" | tail -n +2)
-        else
-            local first_10 last_100
-            first_10=$(echo "$run_content" | head -10 | tail -n +2)
-            last_100=$(echo "$run_content" | tail -100)
-            clipboard_content+=$(echo -e "${first_10}\n\n...\n\n${last_100}")
-        fi
-        
-        clipboard_content+="
----"
-        
+
+        export AGENT_TEE_DURATION="$duration"
+        export AGENT_TEE_EXIT_CODE="${exit_code:-0}"
+
+        local clipboard_content
+        clipboard_content=$(format_clipboard_content "$run_content" "$concern")
+
         copy_to_clipboard "$clipboard_content" 2>/dev/null || true
     fi
-    
-    return $exit_code
+
+    return ${exit_code:-0}
 }
 
 main() {
