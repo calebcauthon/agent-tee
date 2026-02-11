@@ -1,0 +1,69 @@
+name: Update Homebrew Formula
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  update-formula:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout agent-tee
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get version
+        id: get_version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v4
+        with:
+          repository: calebcauthon/homebrew-tap
+          token: ${{ secrets.TAP_GITHUB_TOKEN }}
+          path: homebrew-tap
+
+      - name: Calculate SHA256
+        id: calc_sha
+        run: |
+          URL="https://github.com/calebcauthon/agent-tee/archive/refs/tags/${{ steps.get_version.outputs.version }}.tar.gz"
+          SHA256=$(curl -L "${URL}" | sha256sum | cut -d' ' -f1)
+          echo "SHA256=$SHA256" >> $GITHUB_OUTPUT
+          echo "url=$URL" >> $GITHUB_OUTPUT
+
+      - name: Update formula
+        run: |
+          cat > homebrew-tap/Formula/agent-tee.rb << 'EOF'
+          class AgentTee < Formula
+            desc "Run commands while teeing stdout+stderr to per-concern log files"
+            homepage "https://github.com/calebcauthon/agent-tee"
+            url "${{ steps.calc_sha.outputs.url }}"
+            sha256 "${{ steps.calc_sha.outputs.SHA256 }}"
+            license "MIT"
+
+            def install
+              bin.install "t"
+            end
+
+            test do
+              system "#{bin}/t", "--version"
+              (testpath/".agent-tee/logs").mkpath
+              system "#{bin}/t", "@test", "echo", "hello"
+              assert_match "hello", (testpath/".agent-tee/logs/test.log").read
+            end
+          end
+          EOF
+
+      - name: Commit and push
+        run: |
+          cd homebrew-tap
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add Formula/agent-tee.rb
+          git commit -m "Update agent-tee to ${{ steps.get_version.outputs.version }}"
+          git push origin master
