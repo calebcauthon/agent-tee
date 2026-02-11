@@ -32,6 +32,7 @@ Usage: t [@concern] <command> [args...]
        t [@concern] tail
        t --version
        t --help
+       t --edit-template
 
 Run commands while logging output to per-concern files.
 Concern is specified with @ prefix. If omitted, "default" is used.
@@ -46,6 +47,7 @@ Commands:
     [@concern] copy    Copy last run output to clipboard
     [@concern] read    Read entire log file
     [@concern] tail    Tail -f the log file
+    --edit-template    Edit clipboard template config file
 
 Examples:
     t echo 'hello'                   # Run with default concern
@@ -59,6 +61,21 @@ Examples:
 Environment:
     AGENT_TEE_LOG_DIR   Override default log directory
                         (default: ~/.agent-tee/logs)
+    AGENT_TEE_CONFIG    Override default config file
+                        (default: ~/.agent-tee/config)
+
+Clipboard Template:
+    Customize clipboard output by editing ~/.agent-tee/config
+    Variables: {{command}}, {{output}}, {{duration}}, {{timestamp}}, {{concern}}, {{exit_code}}
+
+    Example config:
+        CLIPBOARD_TEMPLATE='---
+Ran: {{command}}
+Duration: {{duration}}ms
+Exit: {{exit_code}}
+Output:
+{{output}}
+---'
 EOF
 }
 
@@ -258,6 +275,33 @@ cmd_run() {
     return ${exit_code:-0}
 }
 
+cmd_edit_template() {
+    mkdir -p "$(dirname "$CONFIG_FILE")"
+
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        cat > "$CONFIG_FILE" << 'EOF'
+CLIPBOARD_TEMPLATE='---
+Ran: {{command}}
+Duration: {{duration}}ms
+Exit: {{exit_code}}
+Output:
+{{output}}
+---'
+EOF
+        echo "Created config file: $CONFIG_FILE"
+    else
+        echo "Config file already exists: $CONFIG_FILE"
+    fi
+
+    local editor="${EDITOR:-${VISUAL:-vi}}"
+    if command -v "$editor" &>/dev/null; then
+        "$editor" "$CONFIG_FILE"
+    else
+        echo "Error: No editor found. Set EDITOR or VISUAL environment variable." >&2
+        return 1
+    fi
+}
+
 main() {
     [[ $# -eq 0 ]] && { usage >&2; exit 1; }
     
@@ -265,6 +309,7 @@ main() {
     case "$1" in
         -h|--help) usage; exit 0 ;;
         -v|--version) version; exit 0 ;;
+        --edit-template) cmd_edit_template; exit $? ;;
     esac
     
     # Parse concern (must be first if provided)
